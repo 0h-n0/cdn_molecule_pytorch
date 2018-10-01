@@ -1,6 +1,9 @@
 import torch
 
 
+class SmilesEmbbeding(torch.nn.Module):
+    def init(self):
+        pass
 
 class Encorder(torch.nn.Module):
     def init(self):
@@ -14,7 +17,6 @@ class DiversityLayer(torch.nn.Module):
     def init(self):
         pass
     
-
 class CDN(torch.nn.Module):
     def init(self):
         pass
