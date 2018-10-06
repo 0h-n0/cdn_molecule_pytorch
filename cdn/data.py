@@ -41,7 +41,7 @@ class SmilesDataLoader(object):
         return raw_data
             
     def __getitem__(self, i):
-        return torch.LongTensor(self._smiles_to_vec(self.raw_data[i].strip()))
+        return torch.LongTensor(self._smiles_to_vec(self.raw_data[i].strip().split()[0]))
 
     def __len__(self):
         return self.size

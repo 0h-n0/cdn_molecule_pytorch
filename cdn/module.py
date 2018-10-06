@@ -51,83 +51,102 @@ class SmilesEmbbeding(torch.nn.Module):
         return self.e(x)
 
     
-class Encorder(torch.nn.Module):
+class CDN(torch.nn.Module):
     def __init__(self,
                  embedding_dim=128,
                  kernel_sizes=[3, 4, 5, 6],
                  in_channels=[1, 1, 1, 1],
                  out_channels=[128, 128, 128, 128],
-                 max_length=50,
+                 max_mol_length=50,
                  smiles_chars=None,
+                 variational=True,
+                 gaussian_samples=300,
+                 generation_mode=False,                 
     ):
-        super(Encorder, self).__init__()
+        super(CDN, self).__init__()
         self.embed = SmilesEmbbeding(embedding_dim, smiles_chars)
 
         self.num_conv_layers = len(kernel_sizes)
         self.conv_pads = [ None for i in range(self.num_conv_layers)]        
         self.convs = [ None for i in range(self.num_conv_layers)]
-        _image_size = [max_length, embedding_dim] # H, W
+        self.max_mol_length = max_mol_length
+        self.variational = variational
+        self.gaussian_samples = gaussian_samples
+        self.generation_mode = generation_mode
+        
+        _image_size = [max_mol_length, embedding_dim] # H, W
         
         for i in range(self.num_conv_layers):
             ic = in_channels[i]
             oc = out_channels[i]
             k = kernel_sizes[i]
-            pad_along_height = k - 1 # filter_height - strides[1]
-            pad_along_width = k - 1 # filter_width - strides[2]
-            _left = pad_along_width // 2
-            _top = pad_along_height // 2
-            _right = pad_along_width - _left
-            _bottom = pad_along_height - _top
-            _padding = (_left, _right, _top, _bottom)
-            self.conv_pads[i] = \
-                            torch.nn.ConstantPad2d(padding=_padding, value=0)
-            # this padding is compatible with Tensorflow's padding='valid'
             kernel_shape = (k, embedding_dim)
             self.convs[i] = torch.nn.Conv2d(ic, oc, kernel_shape)
             # tensorflow filter =  [filter_height, filter_width, in_channels, out_channels]
             # TODO: tf.nn.embedding_lookup()
-            
-            
-    def forward(self, x):
+        self.convs = torch.nn.ModuleList(self.convs)
+        in_dim  = 128 * sum(map(lambda x: 50 - x + 1, kernel_sizes))
+        self.fc = torch.nn.Linear(in_dim, 450)
+
+        self.fc_mean = torch.nn.Linear(450, gaussian_samples)
+        self.fc_stddev = torch.nn.Linear(450, gaussian_samples)
+
+        self.decode_layer = torch.nn.Linear(gaussian_samples, 150)
+        self.decode_embed = SmilesEmbbeding(embedding_dim, smiles_chars)        
+        
+    def encode(self, x):
         x = self.embed(x)
         # x shape is B, W, H
         B, W, H = x.shape
         embed_x = x.reshape(B, 1, W, H)
         # x shape is B, C=1, W, H
-        print(embed_x.shape)
         conv_flattens = []
         for i in range(self.num_conv_layers):
-            padded_x = self.conv_pads[i](self.convs[i](embed_x))
-            x = F.relu(padded_x)
-            print(x.shape)
+            x = self.convs[i](embed_x)
+            x = F.relu(x)
             conv_flattens.append(x.view(B, -1))
-            print(x.view(B, -1).shape)
-        return x
+        flatten_x = torch.cat(conv_flattens, dim=1)
+        x = F.relu(self.fc(flatten_x))
 
+        if self.variational:
+            self.z_mean = self.fc_mean(x)
+            self.z_stddev =self.fc_stddev(x)
+            latent_loss = 0.5 * torch.sum(self.z_mean**2 + self.z_stddev**2 -
+                                          torch.log(self.z_stddev**2) -1,  1)
+            self.mean_latent_loss = torch.mean(latent_loss)
+            if self.generation_mode:
+                h_pool_flat = self.gaussian_samples
+            else:
+                h_pool_flat = self.z_mean + (self.z_stddev * self.gaussian_samples)
+            #h_pool_flat = h_pool_flat.clone()
+            
+        return h_pool_flat, self.mean_latent_loss
+
+    def decode(self, z, x):
+        z = F.relu(self.decode_layer(z))
+        embed_x = self.decode_embed(x)
+        embed_x_list = torch.split(embed_x, self.max_mol_length, dim=1)
+        print(embed_x_list)
+        return embed_x_list
     
-class Decorder(torch.nn.Module):
-    def __init__(self):
-        super(Decorder, self).__init__()                
-        pass
-
+    def forward(self, x):
+        z, mean_latent_loss = self.encode(x)
+        z = self.decode(z, x)
+        return z, x
+    
     
 class DiversityLayer(torch.nn.Module):
     def __init__(self):
         super(DiversityLayer, self).__init__()        
         pass
     
-class CDN(torch.nn.Module):
-    def __init__(self):
-        super(CDN, self).__init__()
-
-
 
 if __name__ == '__main__':
     x = torch.LongTensor([[i for i in range(50)], [i for i in range(50)]])
     # TODO: padding
 
-    e = Encorder()
-    y = e(x)
-    print(y.shape)
-    print(e)
-    
+    cdn = CDN()
+    y, loss = cdn(x)
+
+    print(cdn)
+    print(y.shape)    
