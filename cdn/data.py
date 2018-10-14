@@ -56,11 +56,7 @@ class SmilesDataLoader(object):
         vec = torch.zeros(self.max_length, dtype=torch.long)
         for i, c in enumerate(smiles):
             vec[i] = self._SMILES_CHARS.index(c)
-        '''        
-        vec = torch.zeros(input_length, max_length, dtype=torch.long)            
-        for i, c in enumerate(smiles):
-            vec[i, self._SMILES_CHARS.index(c)] = 1
-        '''
+
         return vec
     
 
